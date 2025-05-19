@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
-from main import TokenData
 import os
 from dotenv import load_dotenv
-
+import main
 load_dotenv()
 
 SECRETKEY = os.environ.get("SECRETKEY")
@@ -23,7 +22,7 @@ def verify_token(token:str,credentials_exception):
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        token_data = main.TokenData(username=username)
     except JWTError:
         raise credentials_exception
 
