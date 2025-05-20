@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from pymongo import MongoClient
+from pymongo.server_api import ServerApi
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from hashing import Hasher
@@ -32,7 +33,7 @@ load_dotenv()
 
 uri = os.environ.get("MONGO_URI")
 port = int(os.environ.get("DEVPORT"))
-client = MongoClient(uri,port)
+client = MongoClient(uri,server_api=ServerApi('1'))
 db = client["Users"]
 
 class User(BaseModel):
@@ -53,18 +54,28 @@ class TokenData(BaseModel):
 
 @app.post("/register")
 def create_user(request:User):
-	hashed_pass = Hasher.hashPassword(request.password)
-	user_object = dict(request)
-	user_object["password"] = hashed_pass
-	print(user_object)
-	return {"res":"created"}
+    
+    user_exist = db["users"].find_one({"email": request.email})
+
+    if(user_exist):
+        raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="This email is associated with an exisitng account"
+        )
+    hashed_pass = Hasher.hashPassword(request.password)
+    user_object = dict(request)
+    user_object["password"] = hashed_pass
+    user_db = db["users"].insert_one(user_object)
+    print(user_object)
+    print(user_db.inserted_id)
+    return {"res":"created"}
 
 @app.post("/login")
 def login(request:OAuth2PasswordRequestForm = Depends()):
 	user = db["users"].find_one({"username":request.username})
 	if not user:
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'No user found with this {request.username} username')
-	if not Hasher.verifyPassword(user["password"],request.password):
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong Username or password')
+		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'No user found')
+	if not Hasher.verifyPassword(request.password,user["password"]):
+		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong email or password')
 	access_token = create_access_token(data={"sub": user["username"] })
 	return {"access_token": access_token, "token_type": "bearer"}
