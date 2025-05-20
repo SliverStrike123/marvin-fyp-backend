@@ -12,6 +12,7 @@ from jwttoken import create_access_token
 
 app = FastAPI()
 origins = [
+    "http://localhost",
     "http://localhost:3000",
     "http://localhost:8080",
 ]
@@ -23,7 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app = FastAPI()
 @app.get('/')
 def index():
     return {'data':'Hello World'}
@@ -51,7 +51,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-@app.post('/register')
+@app.post("/register")
 def create_user(request:User):
 	hashed_pass = Hasher.hashPassword(request.password)
 	user_object = dict(request)
@@ -59,7 +59,7 @@ def create_user(request:User):
 	print(user_object)
 	return {"res":"created"}
 
-@app.post('/login')
+@app.post("/login")
 def login(request:OAuth2PasswordRequestForm = Depends()):
 	user = db["users"].find_one({"username":request.username})
 	if not user:
