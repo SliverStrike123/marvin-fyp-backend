@@ -9,7 +9,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from hashing import Hasher
 from jwttoken import create_access_token
-
+from gemini import get_chatResponse
 
 app = FastAPI()
 origins = [
@@ -79,3 +79,11 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong email or password')
 	access_token = create_access_token(data={"sub": user["username"] })
 	return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/chat")
+def chat(prompt: str):
+    try:
+        response = get_chatResponse(prompt)
+        return {"response": response}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
