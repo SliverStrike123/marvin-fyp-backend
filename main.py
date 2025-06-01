@@ -35,6 +35,7 @@ uri = os.environ.get("MONGO_URI")
 port = int(os.environ.get("DEVPORT"))
 client = MongoClient(uri,server_api=ServerApi('1'))
 db = client["Users"]
+chat = client["Chat"]
 
 class User(BaseModel):
     email: EmailStr
@@ -51,6 +52,9 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+class ChatPrompt(BaseModel):
+    prompt: str
 
 @app.post("/register")
 def create_user(request:User):
@@ -81,9 +85,9 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 	return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/chat")
-def chat(prompt: str):
+def chat(prompt: ChatPrompt):
     try:
-        response = get_chatResponse(prompt)
+        response = get_chatResponse(prompt.prompt)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

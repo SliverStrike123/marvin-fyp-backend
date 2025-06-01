@@ -16,6 +16,7 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRETKEY, algorithm=ALG)
     return encoded_jwt
 
+
 def verify_token(token:str,credentials_exception):
     try:
         payload = jwt.decode(token, SECRETKEY, algorithms=[ALG])
