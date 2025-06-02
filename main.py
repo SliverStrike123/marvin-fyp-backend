@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from hashing import Hasher
 from jwttoken import create_access_token
 from gemini import get_chatResponse
+from datetime import datetime
 
 app = FastAPI()
 origins = [
@@ -34,8 +35,9 @@ load_dotenv()
 uri = os.environ.get("MONGO_URI")
 port = int(os.environ.get("DEVPORT"))
 client = MongoClient(uri,server_api=ServerApi('1'))
-db = client["Users"]
-chat = client["Chat"]
+db = client["FYP"]
+users = db["users"]
+chat = db["chats"]
 
 class User(BaseModel):
     email: EmailStr
@@ -54,22 +56,23 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 class ChatPrompt(BaseModel):
+    userrole: Optional[str] = None
+    username: str
+    timestamp: Optional[datetime] = None
     prompt: str
 
 @app.post("/register")
 def create_user(request:User):
-    
-    user_exist = db["users"].find_one({"email": request.email})
-
+    user_exist = (db["users"].find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
     if(user_exist):
         raise HTTPException(
              status_code=status.HTTP_400_BAD_REQUEST,
-             detail="This email is associated with an exisitng account"
+             detail="This email or username is associated with an exisitng account"
         )
     hashed_pass = Hasher.hashPassword(request.password)
     user_object = dict(request)
     user_object["password"] = hashed_pass
-    user_db = db["users"].insert_one(user_object)
+    user_db = users.insert_one(user_object)
     print(user_object)
     print(user_db.inserted_id)
     return {"res":"created"}
@@ -87,7 +90,18 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 @app.post("/chat")
 def chat(prompt: ChatPrompt):
     try:
+        msg = dict(prompt)
+        msg["timestamp"] = datetime.now()
+        msg["userrole"] = "user"
+        chat.insert_one(msg)
         response = get_chatResponse(prompt.prompt)
+        aiResponse = ChatPrompt(
+            userrole="gemini",
+            username=prompt.username,
+            timestamp=datetime.now(),
+            prompt=response
+        )
+        chat.insert_one(dict(aiResponse))
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
