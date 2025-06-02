@@ -105,3 +105,11 @@ def chat(prompt: ChatPrompt):
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    
+
+@app.get("/chats/{username}")
+def get_chats(username: str):
+    try:
+        user_chats = list(chat.find({"username": username}))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
