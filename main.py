@@ -63,7 +63,7 @@ class ChatPrompt(BaseModel):
 
 @app.post("/register")
 def create_user(request:User):
-    user_exist = (db["users"].find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
+    user_exist = (users.find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
     if(user_exist):
         raise HTTPException(
              status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,7 +79,7 @@ def create_user(request:User):
 
 @app.post("/login")
 def login(request:OAuth2PasswordRequestForm = Depends()):
-	user = db["users"].find_one({"username":request.username})
+	user = users.find_one({"username":request.username})
 	if not user:
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'No user found')
 	if not Hasher.verifyPassword(request.password,user["password"]):
@@ -105,11 +105,22 @@ def chat(prompt: ChatPrompt):
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-    
+
+# Reformat chat message retrieved from MongoDB
+def reformat_chat_message(message):
+    return {
+        "id": str(message.get("_id")),
+        "userrole": message.get("userrole"),
+        "username": message.get("username"),
+        "timestamp": message.get("timestamp").isoformat() if message.get("timestamp") else None,
+        "prompt": message.get("prompt"),
+    }
 
 @app.get("/chats/{username}")
 def get_chats(username: str):
     try:
-        user_chats = list(chat.find({"username": username}))
+        messages = chat.find({"username": username}).sort("timestamp", 1)
+        formatted_messages = [reformat_chat_message(m) for m in messages]
+        return formatted_messages
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
