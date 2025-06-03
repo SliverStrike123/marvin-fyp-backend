@@ -36,8 +36,8 @@ uri = os.environ.get("MONGO_URI")
 port = int(os.environ.get("DEVPORT"))
 client = MongoClient(uri,server_api=ServerApi('1'))
 db = client["FYP"]
-users = db["users"]
-chat = db["chats"]
+usersDB = db["users"]
+chatDB = db["chats"]
 
 class User(BaseModel):
     email: EmailStr
@@ -63,7 +63,7 @@ class ChatPrompt(BaseModel):
 
 @app.post("/register")
 def create_user(request:User):
-    user_exist = (users.find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
+    user_exist = (usersDB.find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
     if(user_exist):
         raise HTTPException(
              status_code=status.HTTP_400_BAD_REQUEST,
@@ -72,14 +72,14 @@ def create_user(request:User):
     hashed_pass = Hasher.hashPassword(request.password)
     user_object = dict(request)
     user_object["password"] = hashed_pass
-    user_db = users.insert_one(user_object)
+    user_db = usersDB.insert_one(user_object)
     print(user_object)
     print(user_db.inserted_id)
     return {"res":"created"}
 
 @app.post("/login")
 def login(request:OAuth2PasswordRequestForm = Depends()):
-	user = users.find_one({"username":request.username})
+	user = usersDB.find_one({"username":request.username})
 	if not user:
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'No user found')
 	if not Hasher.verifyPassword(request.password,user["password"]):
@@ -90,10 +90,12 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 @app.post("/chat")
 def chat(prompt: ChatPrompt):
     try:
+        print("Prompt received:", prompt)
         msg = dict(prompt)
         msg["timestamp"] = datetime.now()
         msg["userrole"] = "user"
-        chat.insert_one(msg)
+        chatDB.insert_one(msg)
+        print("Message inserted into chat collection:", msg)
         response = get_chatResponse(prompt.prompt)
         aiResponse = ChatPrompt(
             userrole="gemini",
@@ -101,7 +103,8 @@ def chat(prompt: ChatPrompt):
             timestamp=datetime.now(),
             prompt=response
         )
-        chat.insert_one(dict(aiResponse))
+        chatDB.insert_one(dict(aiResponse))
+        print("AI response inserted into chat collection:", aiResponse)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -119,7 +122,9 @@ def reformat_chat_message(message):
 @app.get("/chats/{username}")
 def get_chats(username: str):
     try:
-        messages = chat.find({"username": username}).sort("timestamp", 1)
+        print(f"Retrieving messages for user: {username}")
+        messages = chatDB.find({"username": username}).sort("timestamp", 1)
+        print(f"Retrieved messages for user {username}: {messages}")
         formatted_messages = [reformat_chat_message(m) for m in messages]
         return formatted_messages
     except Exception as e:
