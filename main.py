@@ -1,7 +1,8 @@
 import os
+import shutil
 from typing import Optional
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File
 from pydantic import BaseModel, EmailStr
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
@@ -9,8 +10,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from hashing import Hasher
 from jwttoken import create_access_token
-from gemini import get_chatResponse
+from gemini import get_chatResponse, is_this_math_related, generate_quiz
 from datetime import datetime
+from pathlib import Path
 
 app = FastAPI()
 origins = [
@@ -36,6 +38,8 @@ client = MongoClient(uri,server_api=ServerApi('1'))
 db = client["FYP"]
 usersDB = db["users"]
 chatDB = db["chats"]
+UPLOAD_DIR = "uploads"
+Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
 class User(BaseModel):
     email: EmailStr
@@ -127,3 +131,23 @@ def get_chats(username: str):
         return formatted_messages
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    
+@app.post("/generatequiz")
+def generate_quiz(file: UploadFile = File(...)):
+    fileType = file.filename.split(".")[-1]
+    if fileType not in ["pdf"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type. Only PDF and TXT files are allowed.")
+    
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    if not is_this_math_related(file_path):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The provided file is not math-related.")
+    
+    quiz = generate_quiz(file_path)
+    if not quiz:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate quiz.")
+    
+    return {"quiz": quiz}
+
