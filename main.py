@@ -137,14 +137,14 @@ def generate_quiz(file: UploadFile = File(...)):
     fileType = file.filename.split(".")[-1]
     if fileType not in ["pdf"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type. Only PDF and TXT files are allowed.")
-    
+    print("file type is PDF")
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
+    print("Checking is this related to math or not")
     if not is_this_math_related(file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The provided file is not math-related.")
-    
+    print("Generating quiz from the PDF")
     quiz = generate_quiz(file_path)
     if not quiz:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate quiz.")

@@ -1,7 +1,9 @@
 from google import genai
 from google.genai import types
+from PIL import Image
 import os
 from dotenv import load_dotenv
+import pytesseract
 import fitz  
 
 
@@ -24,16 +26,33 @@ def is_this_math_related(pdf: str):
     doc = fitz.open(pdf)
     text = ""
     for page in doc:
-        text += page.get_text()
+        # Render image at higher resolution
+        pix = page.get_pixmap(dpi=300)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples).convert("L")
+        # OCR with better config
+        page_text = pytesseract.image_to_string(img, lang="eng", config="--oem 3")
+        text += page_text
+
     doc.close()
+
+    text = text[:12000]  # optional truncation
+    print("[OCR TEXT START]")
+    print(text)
+    print("[OCR TEXT END]")
+    # Clear prompt asking for binary response
+    prompt = f"""
+        You are a strict classifier. Carefully analyze the content below. 
+        If it contains any mathematical topics, even in part — such as formulas, equations, expressions, numerical problems, definitions, or topics from algebra, geometry, trigonometry, calculus, etc. — respond with 'yes'.
+
+        If the content is completely unrelated to math, respond with 'no'.
+
+        Content:
+        {text}
+        """
     response = client.models.generate_content(
         model="gemini-2.0-flash",
-        config=types.GenerateContentConfig(
-            system_instruction="You are a math tutor and only answer to math-related questions, " \
-            "based on the provided PDF content. Determine if the content is math-related or not." \
-            "Your response should contain either 'yes' or 'no'."
-        ), 
-        contents=doc
+        config=types.GenerateContentConfig(),
+        contents=prompt
     )
     print(response.text)
     return "yes" in response 
@@ -50,29 +69,29 @@ def generate_quiz(pdf: str):
     truncated_text = text[:12000]  # Optional: Trim to fit token limits
 
     # Initialize Gemini model
-    model = genai.GenerativeModel("gemini-1.5-flash")  # or "gemini-pro" or other supported model
+    model = genai.GenerativeModel("gemini-2.0-flash")  # or "gemini-pro" or other supported model
 
     # Prepare input as `Content` object
     input_content = f"""
-    You are a math tutor and only answer math-related questions.
-    The user will provide you with the content of a math-based PDF file (slides or notes).
-    Your task is to generate a quiz based on the provided content.
+        You are a math tutor and only answer math-related questions.
+        The user will provide you with the content of a math-based PDF file (slides or notes).
+        Your task is to generate a quiz based on the provided content.
 
-    Respond strictly in JSON format like this:
-    {{
-    "questions": [
+        Respond strictly in JSON format like this:
         {{
-        "question": "What is the derivative of x^2?",
-        "options": ["1", "2x", "x^2", "2"],
-        "answer": "2x"
-        }},
-        ...
-    ]
-    }}
+        "questions": [
+            {{
+            "question": "What is the derivative of x^2?",
+            "options": ["1", "2x", "x^2", "2"],
+            "answer": "2x"
+            }},
+            ...
+        ]
+        }}
 
-    Here is the content:
-    {truncated_text}
-    """
+        Here is the content:
+        {truncated_text}
+        """
 
     # Generate response
     response = model.generate_content(input_content)
