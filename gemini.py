@@ -36,9 +36,9 @@ def is_this_math_related(pdf: str):
     doc.close()
 
     text = text[:12000]  # optional truncation
-    print("[OCR TEXT START]")
-    print(text)
-    print("[OCR TEXT END]")
+    # print("[OCR TEXT START]")
+    # print(text)
+    # print("[OCR TEXT END]")
     # Clear prompt asking for binary response
     prompt = f"""
         You are a strict classifier. Carefully analyze the content below. 
@@ -54,10 +54,11 @@ def is_this_math_related(pdf: str):
         config=types.GenerateContentConfig(),
         contents=prompt
     )
-    print(response.text)
-    return "yes" in response 
 
-def generate_quiz(pdf: str):
+    print("yes" in response.text.lower())
+    return "yes" in response.text.lower() 
+
+def generate_quiz(pdf: str, message: str = None):
     # Extract text from PDF
     doc = fitz.open(pdf)
     text = ""
@@ -66,12 +67,9 @@ def generate_quiz(pdf: str):
     doc.close()
 
     # Ensure text is within Gemini's context limit
-    truncated_text = text[:12000]  # Optional: Trim to fit token limits
+    truncated_text = text[:12000]
 
-    # Initialize Gemini model
-    model = genai.GenerativeModel("gemini-2.0-flash")  # or "gemini-pro" or other supported model
-
-    # Prepare input as `Content` object
+    # Prepare prompt
     input_content = f"""
         You are a math tutor and only answer math-related questions.
         The user will provide you with the content of a math-based PDF file (slides or notes).
@@ -84,16 +82,23 @@ def generate_quiz(pdf: str):
             "question": "What is the derivative of x^2?",
             "options": ["1", "2x", "x^2", "2"],
             "answer": "2x"
-            }},
-            ...
+            }}
         ]
         }}
 
         Here is the content:
         {truncated_text}
-        """
 
-    # Generate response
-    response = model.generate_content(input_content)
+        Here is an additional message from the user (optional):
+        {message if message else ""}
+    """
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        config=types.GenerateContentConfig(
+            system_instruction="You are a math tutor and only answer math-related questions."
+        ),
+        contents=input_content
+    )
 
     return response.text

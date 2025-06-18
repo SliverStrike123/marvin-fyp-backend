@@ -1,5 +1,6 @@
 import os
 import shutil
+import json
 from typing import Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File
@@ -38,6 +39,7 @@ client = MongoClient(uri,server_api=ServerApi('1'))
 db = client["FYP"]
 usersDB = db["users"]
 chatDB = db["chats"]
+quizDB = db["quiz"]
 UPLOAD_DIR = "uploads"
 Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
@@ -62,6 +64,13 @@ class ChatPrompt(BaseModel):
     username: str
     timestamp: Optional[datetime] = None
     prompt: str
+
+class QuizAttempt(BaseModel):
+    username: str
+    questions: list
+    answers: dict
+    score: int
+    timestamp: Optional[datetime] = None
 
 @app.post("/register")
 def create_user(request:User):
@@ -133,21 +142,42 @@ def get_chats(username: str):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     
 @app.post("/generatequiz")
-def generate_quiz(file: UploadFile = File(...)):
+def generate_quiz_from_pdf(file: UploadFile = File(...),message: Optional[str] = None):
     fileType = file.filename.split(".")[-1]
     if fileType not in ["pdf"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type. Only PDF and TXT files are allowed.")
-    print("file type is PDF")
+    
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    print("Checking is this related to math or not")
+
     if not is_this_math_related(file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The provided file is not math-related.")
-    print("Generating quiz from the PDF")
+    
     quiz = generate_quiz(file_path)
     if not quiz:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate quiz.")
     
-    return {"quiz": quiz}
+    quiz = quiz.strip().replace("```json", "").replace("```", "").strip()
 
+    try:
+        quiz_dict = json.loads(quiz)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Invalid quiz format: {str(e)}"
+        )
+
+    # Return the parsed JSON object
+    return {"quiz": quiz_dict}
+
+
+@app.post("/savequizattempt")
+def save_quiz_attempt(attempt: QuizAttempt):
+    try:
+        attempt_data = dict(attempt)
+        attempt_data["timestamp"] = datetime.now()
+        quizDB.insert_one(attempt_data)
+        return {"message": "Quiz attempt saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
