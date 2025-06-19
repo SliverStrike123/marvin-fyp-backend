@@ -3,9 +3,9 @@ import shutil
 import json
 from typing import Optional
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File, Form
 from pydantic import BaseModel, EmailStr
-from pymongo import MongoClient
+from pymongo import MongoClient, DESCENDING
 from pymongo.server_api import ServerApi
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +14,7 @@ from jwttoken import create_access_token
 from gemini import get_chatResponse, is_this_math_related, generate_quiz
 from datetime import datetime
 from pathlib import Path
+from bson import ObjectId
 
 app = FastAPI()
 origins = [
@@ -142,7 +143,7 @@ def get_chats(username: str):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     
 @app.post("/generatequiz")
-def generate_quiz_from_pdf(file: UploadFile = File(...),message: Optional[str] = None):
+def generate_quiz_from_pdf(file: UploadFile = File(...),message: Optional[str] = Form(None)):
     fileType = file.filename.split(".")[-1]
     if fileType not in ["pdf"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type. Only PDF and TXT files are allowed.")
@@ -154,7 +155,7 @@ def generate_quiz_from_pdf(file: UploadFile = File(...),message: Optional[str] =
     if not is_this_math_related(file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The provided file is not math-related.")
     
-    quiz = generate_quiz(file_path)
+    quiz = generate_quiz(file_path, message)
     if not quiz:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate quiz.")
     
@@ -181,3 +182,28 @@ def save_quiz_attempt(attempt: QuizAttempt):
         return {"message": "Quiz attempt saved successfully."}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.get("/getquizattempts/{username}")
+def get_quiz_attempts(username: str):
+    try:
+        attempts = list(quizDB.find({"username": username}).sort("timestamp", DESCENDING))
+        for attempt in attempts:
+            attempt["_id"] = str(attempt["_id"])  # Convert ObjectId to string for JSON serialization
+            attempt["timestamp"] = attempt["timestamp"].isoformat()  # Convert datetime to string
+        return {"attempts": attempts}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    
+
+@app.get("/getquizattempt/{attempt_id}")
+def get_quiz_attempt(attempt_id: str):
+    try:
+        attempt = quizDB.find_one({"_id": ObjectId(attempt_id)})
+        if not attempt:
+            raise HTTPException(status_code=404, detail="Quiz attempt not found")
+        
+        attempt["_id"] = str(attempt["_id"])
+        attempt["timestamp"] = attempt["timestamp"].isoformat()
+        return attempt
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

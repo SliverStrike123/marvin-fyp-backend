@@ -55,7 +55,6 @@ def is_this_math_related(pdf: str):
         contents=prompt
     )
 
-    print("yes" in response.text.lower())
     return "yes" in response.text.lower() 
 
 def generate_quiz(pdf: str, message: str = None):
