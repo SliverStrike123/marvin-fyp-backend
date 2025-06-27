@@ -48,6 +48,7 @@ class User(BaseModel):
     email: EmailStr
     username: str
     password: str
+    skill_level: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -84,6 +85,7 @@ def create_user(request:User):
     hashed_pass = Hasher.hashPassword(request.password)
     user_object = dict(request)
     user_object["password"] = hashed_pass
+    user_object["skill_level"] = "None"
     user_db = usersDB.insert_one(user_object)
     print(user_object)
     print(user_db.inserted_id)
@@ -207,3 +209,31 @@ def get_quiz_attempt(attempt_id: str):
         return attempt
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/getuserskilllevel/{username}")
+def get_user_skill_level(username: str):
+    try:
+        user = usersDB.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")  
+        
+        skill_level = user.get("skill_level", "None") 
+        return {"username": username, "skill_level": skill_level}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.post("/setuserskilllevel/{username}")
+def set_user_skill_level(username: str, skill_level: str):
+    try:
+        result = usersDB.update_one(
+            {"username": username},
+            {"$set": {"skill_level": skill_level}}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))  
+
+
