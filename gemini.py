@@ -1,16 +1,27 @@
+from typing import List
 from google import genai
 from google.genai import types
 from PIL import Image
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel
 import pytesseract
 import fitz  
+from fastapi import HTTPException
 
 
 load_dotenv()
 
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=gemini_api_key)
+
+class QuestionAnswer(BaseModel):
+    question: str
+    options: List[str]
+    selected: str
+
+class EvaluationRequest(BaseModel):
+    responses: List[QuestionAnswer]
 
 def get_chatResponse(prompt: str):
     response = client.models.generate_content(
@@ -101,3 +112,26 @@ def generate_quiz(pdf: str, message: str = None):
     )
 
     return response.text
+
+
+def evaluate_user_skill(req: EvaluationRequest):
+    prompt = "You're an educational evaluator. Based on the following questions and user's answers, determine whether the user is a Beginner, Intermediate, or Expert in mathematics. Return ONLY the skill level.\n\n"
+
+    for i, qa in enumerate(req.responses, start=1):
+        prompt += f"Q{i}: {qa.question}\nOptions: {', '.join(qa.options)}\nUser's Answer: {qa.selected}\n\n"
+
+    prompt += "\nYour response should be only one word: Beginner, Intermediate, or Expert."
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            config=types.GenerateContentConfig(
+                system_instruction="You are a math tutor evaluating a user's skill level based on their responses to math questions."
+            ),
+            contents=prompt
+        )
+        skill_level = response.text.strip().split()[0]  
+        print(skill_level)
+        return { "skill_level": skill_level }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

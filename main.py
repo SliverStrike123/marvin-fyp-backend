@@ -1,20 +1,28 @@
 import os
 import shutil
 import json
-from typing import Optional
+from typing import Optional, List
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File, Form
+from fastapi import Depends, FastAPI, HTTPException, status, UploadFile, File, Form, Body
 from pydantic import BaseModel, EmailStr
-from pymongo import MongoClient, DESCENDING
+from pymongo import MongoClient, DESCENDING, ReturnDocument
 from pymongo.server_api import ServerApi
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from hashing import Hasher
 from jwttoken import create_access_token
-from gemini import get_chatResponse, is_this_math_related, generate_quiz
+from gemini import get_chatResponse, is_this_math_related, generate_quiz, evaluate_user_skill
 from datetime import datetime
 from pathlib import Path
 from bson import ObjectId
+
+class QuestionAnswer(BaseModel):
+    question: str
+    options: List[str]
+    selected: str
+
+class EvaluationRequest(BaseModel):
+    responses: List[QuestionAnswer]
 
 app = FastAPI()
 origins = [
@@ -41,6 +49,9 @@ db = client["FYP"]
 usersDB = db["users"]
 chatDB = db["chats"]
 quizDB = db["quiz"]
+beginnerDB = db["beginner"]
+intermediateDB = db["intermediate"]
+expertDB = db["expert"]
 UPLOAD_DIR = "uploads"
 Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
@@ -74,6 +85,7 @@ class QuizAttempt(BaseModel):
     score: int
     timestamp: Optional[datetime] = None
 
+
 @app.post("/register")
 def create_user(request:User):
     user_exist = (usersDB.find_one({"email": request.email}) or db["users"].find_one({"username": request.username}))
@@ -100,6 +112,65 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong email or password')
 	access_token = create_access_token(data={"sub": user["username"] })
 	return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/getuserdetails/{username}")
+def get_user_details(username: str):
+    try:
+        user = usersDB.find_one({"username": username}, {"_id": 0, "username": 1, "email": 1})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))  
+        
+@app.put("/updateuser/{username}")
+def update_user(username: str, data: dict = Body(...)):
+    try:
+        update_fields = {}
+        if "username" in data:
+            new_username = data["username"]
+            if new_username != username:
+                user_exist = usersDB.find_one({"username": new_username})
+                if user_exist:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="This username is already associated with an existing account"
+                    )
+                update_fields["username"] = new_username
+        if "email" in data:
+            update_fields["email"] = data["email"]
+
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No valid fields to update.")
+
+        updated_user = usersDB.find_one_and_update(
+            {"username": username},
+            {"$set": update_fields},
+            return_document=ReturnDocument.AFTER,
+            projection={"_id": 0, "username": 1, "email": 1}
+        )
+
+        if not updated_user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        return {"message": "User updated successfully", "user": updated_user}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.delete("/deleteuser/{username}")
+def delete_user(username: str):
+    try:
+        result = usersDB.delete_one({"username": username})
+
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        return {"message": f"User '{username}' has been deleted successfully."}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 @app.post("/chat")
 def chat(prompt: ChatPrompt):
@@ -218,13 +289,18 @@ def get_user_skill_level(username: str):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")  
         
-        skill_level = user.get("skill_level", "None") 
+        skill_level = user.get("skill_level", "None")
+        result = usersDB.update_one(
+            {"username": username},
+            {"$set": {"skill_level": skill_level}}
+        )
+        print("Skill level updated in database:", result.modified_count)
         return {"username": username, "skill_level": skill_level}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
 
-@app.post("/setuserskilllevel/{username}")
+@app.post("/setuserskilllevel/{username}/{skill_level}")
 def set_user_skill_level(username: str, skill_level: str):
     try:
         result = usersDB.update_one(
@@ -237,3 +313,73 @@ def set_user_skill_level(username: str, skill_level: str):
         raise HTTPException(status_code=500, detail=str(e))  
 
 
+@app.post("/evaluate-skill")
+def evaluate_skill_user(req: EvaluationRequest):
+    return evaluate_user_skill(req)
+
+@app.post("/awardbadge/{username}/{badge_name}")
+def award_badge(username: str, badge_name: str):
+    
+    if not username or not badge_name:
+        raise HTTPException(status_code=400, detail="Username and badge name are required.")
+    match badge_name.lower():
+        case "beginner":
+            badgeDB = beginnerDB
+        case "intermediate":
+            badgeDB = intermediateDB
+        case "expert":
+            badgeDB = expertDB
+    try:
+        badge = {
+            "username": username,
+            "timestamp": datetime.now()
+        }
+        badgeDB.insert_one(badge)
+        return {"message": f"Badge '{badge_name}' awarded to {username}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/getbadge/{username}/{badge_name}")
+def get_badges(username: str, badge_name: str):
+    if not username or not badge_name:
+        raise HTTPException(status_code=400, detail="Username and badge name are required.")
+    match badge_name.lower():
+        case "beginner":
+            badgeDB = beginnerDB
+        case "intermediate":
+            badgeDB = intermediateDB
+        case "expert":
+            badgeDB = expertDB
+    print(badgeDB)
+    try:
+        badge = badgeDB.find_one({"username": username})
+        print(f"Retrieved badge for {username}: {badge}")
+        if not badge:
+            raise HTTPException(status_code=404, detail="Badge not found")
+        print(f"Badge found: {badge}")
+        badge["timestamp"] = badge["timestamp"].isoformat()  # Convert datetime to string
+        if "timestamp" in badge and isinstance(badge["timestamp"], datetime):
+            badge["timestamp"] = badge["timestamp"].isoformat()
+        else:
+            badge["timestamp"] = None
+        return {"badge": badge}
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/getbadges/{username}")
+def get_all_badges(username: str):
+    beginner = beginnerDB.find_one({"username": username})
+    intermediate = intermediateDB.find_one({"username": username})
+    expert = expertDB.find_one({"username": username})
+
+    badges = []
+    if beginner:
+        badges.append("Beginner")
+    if intermediate:
+        badges.append("Intermediate")
+    if expert:
+        badges.append("Expert")
+
+    return {"badges": badges}
