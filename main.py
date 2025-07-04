@@ -74,12 +74,12 @@ class TokenData(BaseModel):
 
 class ChatPrompt(BaseModel):
     userrole: Optional[str] = None
-    username: str
+    userID: str
     timestamp: Optional[datetime] = None
     prompt: str
 
 class QuizAttempt(BaseModel):
-    username: str
+    userID: str
     questions: list
     answers: dict
     score: int
@@ -175,20 +175,30 @@ def delete_user(username: str):
 @app.post("/chat")
 def chat(prompt: ChatPrompt):
     try:
+        user = usersDB.find_one({"username": prompt.userID})
+        user_id = user["_id"]
         print("Prompt received:", prompt)
         msg = dict(prompt)
         msg["timestamp"] = datetime.now()
         msg["userrole"] = "user"
+        msg["userID"] = user_id
         chatDB.insert_one(msg)
         print("Message inserted into chat collection:", msg)
         response = get_chatResponse(prompt.prompt)
+        print("AI response received:", response)
         aiResponse = ChatPrompt(
             userrole="gemini",
-            username=prompt.username,
+            userID=str(user_id),  
             timestamp=datetime.now(),
             prompt=response
         )
-        chatDB.insert_one(dict(aiResponse))
+        chatDB.insert_one({
+            "userrole": aiResponse.userrole,
+            "userID": ObjectId(aiResponse.userID),  
+            "timestamp": aiResponse.timestamp,
+            "prompt": aiResponse.prompt
+        })
+        print("AI response object created:", aiResponse)
         print("AI response inserted into chat collection:", aiResponse)
         return {"response": response}
     except Exception as e:
@@ -196,6 +206,7 @@ def chat(prompt: ChatPrompt):
 
 # Reformat chat message retrieved from MongoDB
 def reformat_chat_message(message):
+    
     return {
         "id": str(message.get("_id")),
         "userrole": message.get("userrole"),
@@ -207,9 +218,9 @@ def reformat_chat_message(message):
 @app.get("/chats/{username}")
 def get_chats(username: str):
     try:
-        print(f"Retrieving messages for user: {username}")
-        messages = chatDB.find({"username": username}).sort("timestamp", 1)
-        print(f"Retrieved messages for user {username}: {messages}")
+        user = usersDB.find_one({"username": username})
+        user_id = user["_id"]
+        messages = chatDB.find({"userID": user_id}).sort("timestamp", 1)
         formatted_messages = [reformat_chat_message(m) for m in messages]
         return formatted_messages
     except Exception as e:
@@ -250,6 +261,8 @@ def generate_quiz_from_pdf(file: UploadFile = File(...),message: Optional[str] =
 def save_quiz_attempt(attempt: QuizAttempt):
     try:
         attempt_data = dict(attempt)
+        user = usersDB.find_one({"username": attempt_data["userID"]})
+        attempt_data["userID"] = user["_id"] if user else None
         attempt_data["timestamp"] = datetime.now()
         quizDB.insert_one(attempt_data)
         return {"message": "Quiz attempt saved successfully."}
@@ -259,10 +272,15 @@ def save_quiz_attempt(attempt: QuizAttempt):
 @app.get("/getquizattempts/{username}")
 def get_quiz_attempts(username: str):
     try:
-        attempts = list(quizDB.find({"username": username}).sort("timestamp", DESCENDING))
+        user = usersDB.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        attempts = list(quizDB.find({"userID": user["_id"]}).sort("timestamp", DESCENDING))
+        print(f"Retrieved {len(attempts)} quiz attempts for user {username}")
         for attempt in attempts:
             attempt["_id"] = str(attempt["_id"])  # Convert ObjectId to string for JSON serialization
             attempt["timestamp"] = attempt["timestamp"].isoformat()  # Convert datetime to string
+            attempt["userID"] = str(attempt["userID"])
         return {"attempts": attempts}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -271,12 +289,15 @@ def get_quiz_attempts(username: str):
 @app.get("/getquizattempt/{attempt_id}")
 def get_quiz_attempt(attempt_id: str):
     try:
+        print(attempt_id)
         attempt = quizDB.find_one({"_id": ObjectId(attempt_id)})
+
         if not attempt:
             raise HTTPException(status_code=404, detail="Quiz attempt not found")
         
         attempt["_id"] = str(attempt["_id"])
         attempt["timestamp"] = attempt["timestamp"].isoformat()
+        attempt["userID"] = str(attempt["userID"])
         return attempt
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -291,7 +312,7 @@ def get_user_skill_level(username: str):
         
         skill_level = user.get("skill_level", "None")
         result = usersDB.update_one(
-            {"username": username},
+            {"userID": user["_id"]},
             {"$set": {"skill_level": skill_level}}
         )
         print("Skill level updated in database:", result.modified_count)
@@ -303,15 +324,33 @@ def get_user_skill_level(username: str):
 @app.post("/setuserskilllevel/{username}/{skill_level}")
 def set_user_skill_level(username: str, skill_level: str):
     try:
-        result = usersDB.update_one(
-            {"username": username},
-            {"$set": {"skill_level": skill_level}}
-        )
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="User not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))  
+        # Define the hierarchy
+        skill_hierarchy = {
+            "beginner": 0,
+            "intermediate": 1,
+            "expert": 2
+        }
 
+        # Fetch the user
+        user = usersDB.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        current_level = user.get("skill_level", "None").lower()
+        skill_level = skill_level.lower()
+
+        # Compare current and new skill levels
+        if skill_hierarchy[skill_level] > skill_hierarchy.get(current_level, 0):
+            result = usersDB.update_one(
+                {"username": username},
+                {"$set": {"skill_level": skill_level}}
+            )
+            print("Skill level updated in database:", result.modified_count)
+        else:
+            print(f"Skill level remains at {current_level}. No update performed.")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/evaluate-skill")
 def evaluate_skill_user(req: EvaluationRequest):
@@ -330,8 +369,9 @@ def award_badge(username: str, badge_name: str):
         case "expert":
             badgeDB = expertDB
     try:
+        user = usersDB.find_one({"username": username})
         badge = {
-            "username": username,
+            "userID": user["_id"],
             "timestamp": datetime.now()
         }
         badgeDB.insert_one(badge)
@@ -343,6 +383,7 @@ def award_badge(username: str, badge_name: str):
 def get_badges(username: str, badge_name: str):
     if not username or not badge_name:
         raise HTTPException(status_code=400, detail="Username and badge name are required.")
+
     match badge_name.lower():
         case "beginner":
             badgeDB = beginnerDB
@@ -350,30 +391,40 @@ def get_badges(username: str, badge_name: str):
             badgeDB = intermediateDB
         case "expert":
             badgeDB = expertDB
-    print(badgeDB)
+        case _:
+            raise HTTPException(status_code=400, detail="Invalid badge name")
+
     try:
-        badge = badgeDB.find_one({"username": username})
-        print(f"Retrieved badge for {username}: {badge}")
+        user = usersDB.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        badge = badgeDB.find_one({"userID": user["_id"]})
         if not badge:
             raise HTTPException(status_code=404, detail="Badge not found")
-        print(f"Badge found: {badge}")
-        badge["timestamp"] = badge["timestamp"].isoformat()  # Convert datetime to string
-        if "timestamp" in badge and isinstance(badge["timestamp"], datetime):
+
+        # ──► convert the non‑JSON types
+        if isinstance(badge.get("_id"), ObjectId):
+            badge["_id"] = str(badge["_id"])
+        if isinstance(badge.get("userID"), ObjectId):
+            badge["userID"] = str(badge["userID"])
+        if isinstance(badge.get("timestamp"), datetime):
             badge["timestamp"] = badge["timestamp"].isoformat()
-        else:
-            badge["timestamp"] = None
+
         return {"badge": badge}
-    except HTTPException as http_err:
-        raise http_err
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 @app.get("/getbadges/{username}")
 def get_all_badges(username: str):
-    beginner = beginnerDB.find_one({"username": username})
-    intermediate = intermediateDB.find_one({"username": username})
-    expert = expertDB.find_one({"username": username})
-
+    user = usersDB.find_one({"username": username})
+    beginner = beginnerDB.find_one({"userID": user["_id"]})
+    intermediate = intermediateDB.find_one({"userID": user["_id"]})
+    expert = expertDB.find_one({"userID": user["_id"]})
+    
     badges = []
     if beginner:
         badges.append("Beginner")
