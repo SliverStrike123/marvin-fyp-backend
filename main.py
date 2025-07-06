@@ -52,6 +52,9 @@ quizDB = db["quiz"]
 beginnerDB = db["beginner"]
 intermediateDB = db["intermediate"]
 expertDB = db["expert"]
+beginnerQuizDB = db["beginner_quiz"]
+intermediateQuizDB = db["intermediate_quiz"]
+expertQuizDB = db["expert_quiz"]
 UPLOAD_DIR = "uploads"
 Path(UPLOAD_DIR).mkdir(exist_ok=True)
 
@@ -434,3 +437,69 @@ def get_all_badges(username: str):
         badges.append("Expert")
 
     return {"badges": badges}
+
+
+@app.post("/saveLessonQuizScore/{username}/{skill_level}/{score}")
+def save_lesson_quiz(username: str, skill_level: str, score: int):
+    try:
+        print("Looking for user:", username)
+        user = usersDB.find_one({"username": username})
+        match skill_level.lower():
+            case "beginner":
+                lessonQuizDB = beginnerQuizDB
+            case "intermediate":
+                lessonQuizDB = intermediateQuizDB
+            case "expert":
+                lessonQuizDB = expertQuizDB
+        print(f"Saving score for user: {username}, skill level: {skill_level}, score: {score}")
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")   
+        
+        print(f"User found: {user['_id']}")
+        if lessonQuizDB.find_one({"userID": user["_id"]}):
+            result = beginnerQuizDB.find_one({"userID": user["_id"]})
+            if result["score"] < score:
+                lessonQuizDB.update_one(
+                    {"userID": user["_id"]},
+                    {"$set": {"score": score, "timestamp": datetime.now()}}
+                )
+            else:
+                return {"message": "Score is not higher than the existing score."}
+        else:
+            lessonQuizDB.insert_one({
+                "userID": user["_id"],
+                "score": score,
+                "timestamp": datetime.now()
+            })
+        return {"message": "Quiz score saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/leaderboard/{skill_level}")
+def get_leaderboard(skill_level: str):
+    try:
+        match skill_level.lower():
+            case "beginner":
+                lessonQuizDB = beginnerQuizDB
+            case "intermediate":
+                lessonQuizDB = intermediateQuizDB
+            case "expert":
+                lessonQuizDB = expertQuizDB
+            case _:
+                raise HTTPException(status_code=400, detail="Invalid skill level")
+
+        leaderboard = list(lessonQuizDB.find().sort("score", DESCENDING).limit(10))
+        print(f"Retrieved {len(leaderboard)} entries from the leaderboard for skill level: {skill_level}")
+
+        for entry in leaderboard:
+            username_doc = usersDB.find_one({"_id": entry["userID"]}, {"username": 1})
+            entry["_id"] = str(entry["_id"])
+            entry["userID"] = str(entry["userID"])
+            entry["username"] = username_doc["username"] if username_doc else "Unknown"
+            entry["score"] = entry.get("score", 0)
+            entry["timestamp"] = entry["timestamp"].isoformat()
+
+        return {"leaderboard": leaderboard}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
