@@ -95,7 +95,7 @@ def create_user(request:User):
     if(user_exist):
         raise HTTPException(
              status_code=status.HTTP_400_BAD_REQUEST,
-             detail="This email or username is associated with an exisitng account"
+             detail="This email or username is associated with an existing account"
         )
     hashed_pass = Hasher.hashPassword(request.password)
     user_object = dict(request)
@@ -112,7 +112,7 @@ def login(request:OAuth2PasswordRequestForm = Depends()):
 	if not user:
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'No user found')
 	if not Hasher.verifyPassword(request.password,user["password"]):
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong email or password')
+		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail = f'Wrong username or password')
 	access_token = create_access_token(data={"sub": user["username"] })
 	return {"access_token": access_token, "token_type": "bearer"}
 
@@ -141,6 +141,12 @@ def update_user(username: str, data: dict = Body(...)):
                     )
                 update_fields["username"] = new_username
         if "email" in data:
+            email_exist = usersDB.find_one({"email": data["email"], "username": {"$ne": username}})
+            if email_exist:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This email is already associated with an existing account"
+                )
             update_fields["email"] = data["email"]
 
         if not update_fields:
