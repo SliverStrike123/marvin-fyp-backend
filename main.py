@@ -320,11 +320,6 @@ def get_user_skill_level(username: str):
             raise HTTPException(status_code=404, detail="User not found")  
         
         skill_level = user.get("skill_level", "None")
-        result = usersDB.update_one(
-            {"userID": user["_id"]},
-            {"$set": {"skill_level": skill_level}}
-        )
-        print("Skill level updated in database:", result.modified_count)
         return {"username": username, "skill_level": skill_level}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -346,10 +341,10 @@ def set_user_skill_level(username: str, skill_level: str):
             raise HTTPException(status_code=404, detail="User not found")
 
         current_level = user.get("skill_level", "None").lower()
-        skill_level = skill_level.lower()
+        compared_skill_level = skill_level.lower()
 
         # Compare current and new skill levels
-        if skill_hierarchy[skill_level] > skill_hierarchy.get(current_level, 0):
+        if current_level=="none" or skill_hierarchy[compared_skill_level] > skill_hierarchy.get(current_level, 0):
             result = usersDB.update_one(
                 {"username": username},
                 {"$set": {"skill_level": skill_level}}
