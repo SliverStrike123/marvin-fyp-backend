@@ -46,11 +46,7 @@ def is_this_math_related(pdf: str):
 
     doc.close()
 
-    text = text[:12000]  # optional truncation
-    # print("[OCR TEXT START]")
-    # print(text)
-    # print("[OCR TEXT END]")
-    # Clear prompt asking for binary response
+    text = text[:12000] 
     prompt = f"""
         You are a strict classifier. Carefully analyze the content below. 
         If it contains any mathematical topics, even in part — such as formulas, equations, expressions, numerical problems, definitions, or topics from algebra, geometry, trigonometry, calculus, etc. — respond with 'yes'.
