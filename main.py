@@ -170,11 +170,27 @@ def update_user(username: str, data: dict = Body(...)):
 @app.delete("/deleteuser/{username}")
 def delete_user(username: str):
     try:
+        user = usersDB.find_one({"username": username})
+        userID = user["_id"] if user else None
         result = usersDB.delete_one({"username": username})
 
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="User not found.")
+        # Collections to clean up user data from
+        collections = [
+            chatDB,
+            quizDB,
+            beginnerDB,
+            intermediateDB,
+            expertDB,
+            beginnerQuizDB,
+            intermediateQuizDB,
+            expertQuizDB
+        ]
 
+        # Delete user-related documents from each collection
+        for collection in collections:
+            collection.delete_many({"userID": userID})
         return {"message": f"User '{username}' has been deleted successfully."}
 
     except Exception as e:
@@ -207,8 +223,6 @@ def chat(prompt: ChatPrompt):
             "timestamp": aiResponse.timestamp,
             "prompt": aiResponse.prompt
         })
-        print("AI response object created:", aiResponse)
-        print("AI response inserted into chat collection:", aiResponse)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
